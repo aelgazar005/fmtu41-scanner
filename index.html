@@ -74,6 +74,8 @@
 <div id="stats">جاري تحميل الإحصائيات...</div>
 
 <script>
+// ⚠️ غيّر اللينك ده بلينك الـ Deploy بتاعك من Apps Script
+// (Deploy > Manage deployments > انسخ اللينك اللي بينتهي بـ /exec)
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxg7s6hw0o5nMEwpEG_AC5mLLuVSy9P4n43UM17DESfrLEwK3fWgpFqiEDgGgFEYRtP/exec";
 
 let isProcessing = false;
@@ -118,6 +120,41 @@ function startCamera() {
   });
 }
 
+// نداء البيانات بتقنية JSONP بدل fetch عشان نتفادى مشكلة CORS بين GitHub و Apps Script
+function jsonpRequest(url) {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'jsonp_cb_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+    const script = document.createElement('script');
+
+    const cleanup = () => {
+      delete window[callbackName];
+      script.remove();
+    };
+
+    window[callbackName] = (data) => {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("تعذر الوصول للسيرفر"));
+    };
+
+    const sep = url.includes('?') ? '&' : '?';
+    script.src = url + sep + 'callback=' + callbackName;
+    document.body.appendChild(script);
+
+    // Timeout بعد 10 ثواني لو محصلش رد
+    setTimeout(() => {
+      if (window[callbackName]) {
+        cleanup();
+        reject(new Error("انتهت مهلة الاتصال بالسيرفر"));
+      }
+    }, 10000);
+  });
+}
+
 function onScanSuccess(decodedText) {
   if (isProcessing) return;
   isProcessing = true;
@@ -126,8 +163,7 @@ function onScanSuccess(decodedText) {
   resultDiv.className = 'idle';
   resultDiv.innerHTML = "⏳ جاري التحقق...";
 
-  fetch(`${APPS_SCRIPT_URL}?action=checkin&code=${encodeURIComponent(decodedText)}`)
-    .then(r => r.json())
+  jsonpRequest(`${APPS_SCRIPT_URL}?action=checkin&code=${encodeURIComponent(decodedText)}`)
     .then(handleResponse)
     .catch(handleError);
 }
@@ -169,8 +205,7 @@ function handleError(err) {
 }
 
 function loadStats() {
-  fetch(`${APPS_SCRIPT_URL}?action=stats`)
-    .then(r => r.json())
+  jsonpRequest(`${APPS_SCRIPT_URL}?action=stats`)
     .then(stats => {
       document.getElementById('stats').innerHTML =
         `حضروا: ${stats.checkedIn} / إجمالي المسجلين: ${stats.total}`;
