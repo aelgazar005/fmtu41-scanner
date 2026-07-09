@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>سكانر الحضور - FMTU 41</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    background: #0f172a;
+    color: #fff;
+    margin: 0;
+    padding: 16px;
+    text-align: center;
+  }
+  h2 { margin-bottom: 4px; }
+  #startBtn {
+    margin: 20px auto;
+    padding: 16px 32px;
+    font-size: 18px;
+    font-weight: bold;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    display: block;
+    width: 100%;
+    max-width: 420px;
+  }
+  #startBtn:active { background: #1d4ed8; }
+  #reader {
+    width: 100%;
+    max-width: 420px;
+    margin: 16px auto;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 3px solid #334155;
+    display: none;
+  }
+  #result {
+    margin-top: 20px;
+    padding: 20px;
+    border-radius: 16px;
+    min-height: 90px;
+    font-size: 20px;
+    font-weight: bold;
+    transition: 0.2s;
+  }
+  .idle { background: #1e293b; }
+  .success { background: #16a34a; }
+  .already { background: #d97706; }
+  .error { background: #dc2626; font-size: 15px; }
+  #name { font-size: 26px; margin-top: 6px; }
+  #stats { margin-top: 14px; font-size: 14px; color: #94a3b8; }
+  #errDetail { font-size: 12px; color: #fca5a5; margin-top: 8px; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<h2>📷 سكانر حضور المؤتمر</h2>
+
+<button id="startBtn">▶️ ابدأ السكان</button>
+
+<div id="reader"></div>
+
+<div id="result" class="idle">
+  دوس "ابدأ السكان" عشان تفتح الكاميرا
+</div>
+<div id="errDetail"></div>
+
+<div id="stats">جاري تحميل الإحصائيات...</div>
+
+<script>
+// ⚠️ غيّر اللينك ده بلينك الـ Deploy بتاعك من Apps Script
+// (Deploy > Manage deployments > انسخ اللينك اللي بينتهي بـ /exec)
+const APPS_SCRIPT_URL = "PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE";
+
+let isProcessing = false;
+let html5QrCode = null;
+let cameraStarted = false;
+
+document.getElementById('startBtn').addEventListener('click', startCamera);
+
+function startCamera() {
+  const resultDiv = document.getElementById('result');
+  const errDiv = document.getElementById('errDetail');
+  errDiv.innerHTML = "";
+
+  if (cameraStarted) return;
+
+  if (typeof Html5Qrcode === 'undefined') {
+    resultDiv.className = 'error';
+    resultDiv.innerHTML = "❌ مكتبة السكانر مش محملة، تأكد من الإنترنت";
+    return;
+  }
+
+  resultDiv.className = 'idle';
+  resultDiv.innerHTML = "⏳ جاري فتح الكاميرا...";
+
+  html5QrCode = new Html5Qrcode("reader");
+  document.getElementById('reader').style.display = 'block';
+
+  html5QrCode.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: { width: 250, height: 250 } },
+    onScanSuccess
+  ).then(() => {
+    cameraStarted = true;
+    document.getElementById('startBtn').style.display = 'none';
+    resultDiv.className = 'idle';
+    resultDiv.innerHTML = "وجّه الكاميرا على QR الخاص بالمسجل";
+  }).catch(err => {
+    resultDiv.className = 'error';
+    resultDiv.innerHTML = "❌ فشل تشغيل الكاميرا";
+    errDiv.innerHTML = "تفاصيل الخطأ: " + (err && err.message ? err.message : String(err));
+    document.getElementById('reader').style.display = 'none';
+  });
+}
+
+function onScanSuccess(decodedText) {
+  if (isProcessing) return;
+  isProcessing = true;
+
+  const resultDiv = document.getElementById('result');
+  resultDiv.className = 'idle';
+  resultDiv.innerHTML = "⏳ جاري التحقق...";
+
+  fetch(`${APPS_SCRIPT_URL}?action=checkin&code=${encodeURIComponent(decodedText)}`)
+    .then(r => r.json())
+    .then(handleResponse)
+    .catch(handleError);
+}
+
+function handleResponse(data) {
+  const resultDiv = document.getElementById('result');
+
+  if (data.status === "not_found") {
+    resultDiv.className = 'error';
+    resultDiv.innerHTML = "❌ الكود ده مش موجود في قايمة المسجلين";
+  }
+  else if (data.status === "already_checked") {
+    resultDiv.className = 'already';
+    resultDiv.innerHTML = `⚠️ الاسم ده اتسجل حضوره قبل كده<br><span id="name">${data.name}</span>`;
+  }
+  else if (data.status === "success") {
+    resultDiv.className = 'success';
+    resultDiv.innerHTML = `✅ تم تسجيل الحضور<br><span id="name">${data.name}</span>`;
+  }
+
+  loadStats();
+
+  setTimeout(() => {
+    isProcessing = false;
+    if (data.status !== "success" && data.status !== "already_checked") {
+      resultDiv.className = 'idle';
+      resultDiv.innerHTML = "وجّه الكاميرا على QR الخاص بالمسجل";
+    }
+  }, 2000);
+}
+
+function handleError(err) {
+  const resultDiv = document.getElementById('result');
+  const errDiv = document.getElementById('errDetail');
+  resultDiv.className = 'error';
+  resultDiv.innerHTML = "حصل خطأ في الاتصال بالسيرفر";
+  errDiv.innerHTML = err && err.message ? err.message : String(err);
+  isProcessing = false;
+}
+
+function loadStats() {
+  fetch(`${APPS_SCRIPT_URL}?action=stats`)
+    .then(r => r.json())
+    .then(stats => {
+      document.getElementById('stats').innerHTML =
+        `حضروا: ${stats.checkedIn} / إجمالي المسجلين: ${stats.total}`;
+    })
+    .catch(() => {
+      document.getElementById('stats').innerHTML = "تعذر تحميل الإحصائيات";
+    });
+}
+
+loadStats();
+</script>
+
+</body>
+</html>
